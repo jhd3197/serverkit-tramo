@@ -1,0 +1,226 @@
+name: Create Release
+
+# Fully automated release pipeline: bump `version` in plugin.json and push to
+# main (or push a v* tag) — CI builds the runtime bundle, zips it, creates the
+# GitHub release with the zip attached, downloads the PUBLISHED asset back,
+# and upserts this extension's entry in the serverkit-extensions registry
+# (version, source URL, sha256) with a commit straight to its main branch.
+#
+# One-time setup: create a fine-grained PAT with contents:write on the
+# serverkit-extensions repo and add it here as the REGISTRY_TOKEN secret.
+# Without the secret the release still happens; only the registry sync skips.
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  # Figure out which version we're releasing and whether it's new.
+  # Source of truth is plugin.json's "version". A tag push (vX.Y.Z) overrides
+  # it. If the tag already exists we skip the build entirely, so a merge to
+  # main that doesn't bump the version is a no-op.
+  prepare:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[skip release]')"
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      tag: ${{ steps.get_version.outputs.tag }}
+      name: ${{ steps.get_version.outputs.name }}
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: get_version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+            VERSION=${TAG_NAME#v}
+            echo "Source: tag push ($TAG_NAME)"
+          else
+            VERSION=$(jq -r '.version' plugin.json)
+            TAG_NAME="v$VERSION"
+            echo "Source: plugin.json ($VERSION)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "name=$(jq -r '.display_name' plugin.json)" >> "$GITHUB_OUTPUT"
+          echo "Release version: $VERSION (tag $TAG_NAME)"
+
+      - name: Check whether tag already released
+        id: check
+        run: |
+          TAG="${{ steps.get_version.outputs.tag }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists — nothing to release. Bump plugin.json to cut a new one."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Tag $TAG is new — proceeding with release."
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  release:
+    needs: prepare
+    if: needs.prepare.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies and build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Run frontend tests (if any)
+        working-directory: frontend
+        run: |
+          if jq -e '.scripts.test' package.json >/dev/null; then npm test; else echo "no frontend tests — skipping"; fi
+
+      - name: Sync frontend/package.json version
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          node -e "const fs=require('fs'),p='frontend/package.json',j=JSON.parse(fs.readFileSync(p));j.version='$VERSION';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
+
+      - name: Build release zip
+        run: bash scripts/build-zip.sh
+
+      - name: Locate zip
+        id: zip
+        run: |
+          ZIP=$(ls dist/serverkit-*.zip | head -1)
+          echo "path=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$ZIP" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "Built $ZIP"
+
+      - name: Generate release notes
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          TAG="${{ needs.prepare.outputs.tag }}"
+          NAME="${{ needs.prepare.outputs.name }}"
+
+          # Previous stable tag (exclude betas), for the changelog range.
+          PREV_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | grep -v beta | sort -V | tail -1)
+
+          {
+            echo "## $NAME v$VERSION"
+            echo ""
+            if [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "$TAG" ]; then
+              echo "### Changes since $PREV_TAG"
+              echo ""
+              git log "$PREV_TAG"..HEAD --pretty=format:"- %s" --no-merges | head -50
+            else
+              echo "Initial stable release."
+            fi
+            echo ""
+            echo ""
+            echo "---"
+            echo "\`sha256: ${{ steps.zip.outputs.sha256 }}\`"
+            echo ""
+            echo "Install from the ServerKit Marketplace (registry: \`serverkit-extensions\`),"
+            echo "or via the panel → Marketplace → Plugins → Upload Zip."
+          } > release_notes.md
+
+          cat release_notes.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: ${{ needs.prepare.outputs.name }} ${{ needs.prepare.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: ${{ steps.zip.outputs.path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: |
+          {
+            echo "## Release Created"
+            echo ""
+            echo "- **Version:** ${{ needs.prepare.outputs.version }}"
+            echo "- **Tag:** ${{ needs.prepare.outputs.tag }}"
+            echo "- **Zip:** ${{ steps.zip.outputs.path }}"
+            echo "- **sha256:** \`${{ steps.zip.outputs.sha256 }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Sync the serverkit-extensions registry with the release we just published.
+  # The sha256 comes from the PUBLISHED asset (downloaded back from the
+  # release), so the registry can never drift from what panels download.
+  registry:
+    needs: [prepare, release]
+    if: needs.prepare.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo (for the update script)
+        uses: actions/checkout@v4
+
+      - name: Check REGISTRY_TOKEN is configured
+        id: token
+        run: |
+          if [ -z "${{ secrets.REGISTRY_TOKEN }}" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::REGISTRY_TOKEN secret not set — skipping registry sync. Add a fine-grained PAT (contents:write on serverkit-extensions) to enable it."
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout serverkit-extensions registry
+        if: steps.token.outputs.available == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: jhd3197/serverkit-extensions
+          token: ${{ secrets.REGISTRY_TOKEN }}
+          path: registry
+
+      - name: Download the published release asset
+        if: steps.token.outputs.available == 'true'
+        run: |
+          mkdir -p dist
+          gh release download "${{ needs.prepare.outputs.tag }}" --pattern "*.zip" --dir dist --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update index.json and push
+        if: steps.token.outputs.available == 'true'
+        working-directory: registry
+        run: |
+          node ../scripts/update-registry.mjs \
+            --zip "$(ls ../dist/serverkit-*.zip | head -1)" \
+            --tag "${{ needs.prepare.outputs.tag }}" \
+            --registry .
+          if git diff --quiet index.json; then
+            echo "Registry already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.json
+          git commit -m "registry: ${{ needs.prepare.outputs.name }} ${{ needs.prepare.outputs.version }} (${{ github.repository }})"
+          git push
+
+      - name: Validate registry
+        if: steps.token.outputs.available == 'true'
+        working-directory: registry
+        run: python3 scripts/validate.py
