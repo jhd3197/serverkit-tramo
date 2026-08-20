@@ -11,6 +11,7 @@ import tramoCss from 'tramo/styles.css?inline';
 import { api } from 'serverkit-sdk';
 import { EmptyState } from './primitives.jsx';
 import { registry } from '../registry.js';
+import { useTranslation } from 'serverkit-sdk';
 
 if (typeof document !== 'undefined' && !document.getElementById('serverkit-tramo-editor-styles')) {
     const style = document.createElement('style');
@@ -20,6 +21,7 @@ if (typeof document !== 'undefined' && !document.getElementById('serverkit-tramo
 }
 
 const TramoEditor = ({ slug, onSaveStateChange }) => {
+    const { t } = useTranslation();
     const handle = useWorkflow({
         registry,
         key: slug,
@@ -45,7 +47,7 @@ const TramoEditor = ({ slug, onSaveStateChange }) => {
     if (!handle.ready) {
         return (
             <div className="tramo-editor__loading">
-                <EmptyState loading title="Loading workflow..." />
+                <EmptyState loading title={t('tramo.tramoEditor.loadingWorkflow', 'Loading workflow...')} />
             </div>
         );
     }

@@ -7,6 +7,7 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Inbox, X, AlertTriangle, AlertCircle, Info } from 'lucide-react';
+import { useTranslation } from 'serverkit-sdk';
 
 // Mirrors frontend/src/components/ui/button.jsx's variant/size -> class map.
 const VARIANT_CLASSES = {
@@ -99,6 +100,7 @@ export function Modal({
     className = '',
     size = 'md',
 }) {
+    const { t } = useTranslation();
     if (!open) return null;
     return (
         <DialogShell
@@ -112,7 +114,7 @@ export function Modal({
             )}
             <button type="button" className="ui-dialog-close" onClick={onClose}>
                 <X />
-                <span className="sr-only">Close</span>
+                <span className="sr-only">{t('tramo.primitives.close', 'Close')}</span>
             </button>
             <div className="sk-modal__body">{children}</div>
             {footer && <div className="sk-modal__footer">{footer}</div>}
@@ -188,13 +190,14 @@ export function EmptyState({
     size = 'default',
     loading = false,
 }) {
+    const { t } = useTranslation();
     if (loading) {
         return (
             <div
                 className={`empty-state empty-state--${size} empty-state--loading`}
                 role="status"
                 aria-busy="true"
-                aria-label={title || 'Loading'}
+                aria-label={title || t('tramo.primitives.loading', 'Loading')}
             >
                 <div className="skeleton-panel">
                     <div className="skeleton-panel__head">
