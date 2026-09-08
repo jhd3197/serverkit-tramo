@@ -34,6 +34,12 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      # The panel imports dist/index.mjs from a Blob in the browser. Anything
+      # Node-only left in it (process.env, require) breaks the extension at
+      # load time and no unit test notices, so gate on the built artifact.
+      - name: Check the bundle is browser-safe
+        run: node scripts/check-bundle.mjs frontend/dist/index.mjs
+
       - name: Run frontend tests (if any)
         working-directory: frontend
         run: |

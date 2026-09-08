@@ -17,6 +17,14 @@ const EXTERNAL = [
 
 export default defineConfig({
     plugins: [react()],
+    // Library builds leave `process.env.NODE_ENV` in place for the consumer to
+    // resolve, but our consumer is a browser: bundled deps reference it, and
+    // the panel imports this file straight from a Blob where `process` does
+    // not exist -- "Can't find variable: process" (Safari) / "process is not
+    // defined" (Chrome) and the extension never loads. Pin it at build time.
+    define: {
+        'process.env.NODE_ENV': JSON.stringify('production'),
+    },
     build: {
         outDir: 'dist',
         emptyOutDir: false, // dist also holds release zips; keep them
