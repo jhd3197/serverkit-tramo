@@ -498,6 +498,118 @@ def test_uninstall_revokes_key_and_subscription(app, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# engine auto-install: installing the extension brings the engine up
+# --------------------------------------------------------------------------- #
+def _lifecycle():
+    return importlib.import_module(f'app.plugins.{SLUG}.lifecycle')
+
+
+@pytest.fixture
+def docker_host(monkeypatch, posix):
+    """A Linux host with Docker and no tramo container yet."""
+    monkeypatch.setattr(host_mod, 'is_command_available', lambda name: True)
+    monkeypatch.setattr(TramoHostService, 'is_installed', classmethod(lambda cls: False))
+
+
+def _capture_enqueue(monkeypatch):
+    from app.plugins_sdk import jobs as jobs_sdk
+    queued = []
+    monkeypatch.setattr(jobs_sdk, 'enqueue',
+                        lambda kind, payload=None, **kw: queued.append(kind) or {'id': 1})
+    return queued
+
+
+def test_on_install_queues_engine_install(app, monkeypatch, docker_host):
+    _mk_plugin_row()
+    queued = _capture_enqueue(monkeypatch)
+    _lifecycle().on_install(SimpleNamespace(slug=SLUG))
+    assert queued == ['tramo.install_engine']
+    # The UI shows progress straight away, before the worker picks the job up.
+    assert TramoHostService.get_status()['state'] == 'installing'
+
+
+@pytest.mark.parametrize('case', ['windows', 'no_docker', 'installed', 'removed'])
+def test_on_install_skips_engine_install(app, monkeypatch, docker_host, case):
+    _mk_plugin_row({'engine_removed': True} if case == 'removed' else None)
+    if case == 'windows':
+        monkeypatch.setattr(TramoHostService, '_is_windows', classmethod(lambda cls: True))
+    elif case == 'no_docker':
+        monkeypatch.setattr(host_mod, 'is_command_available', lambda name: False)
+    elif case == 'installed':
+        monkeypatch.setattr(TramoHostService, 'is_installed', classmethod(lambda cls: True))
+    queued = _capture_enqueue(monkeypatch)
+    _lifecycle().on_install(SimpleNamespace(slug=SLUG))
+    assert queued == []
+    assert eb_mod._config().get('engine_install') is None
+
+
+def test_install_engine_job_success_clears_progress(app, monkeypatch, docker_host):
+    _mk_plugin_row({'engine_install': {'state': 'installing', 'at': 0}})
+    _mk_admin()
+    seen = {}
+
+    def fake_install(cls, host_port=None, callback_url=None, callback_api_key=None):
+        seen['key'] = callback_api_key
+        return {'success': True, 'host_port': 8377}
+    monkeypatch.setattr(TramoHostService, 'install', classmethod(fake_install))
+    res = jobs_mod.install_engine(SimpleNamespace(id=1))
+    assert res == {'installed': True, 'host_port': 8377}
+    assert seen['key'], 'the engine must get its panel call-back key'
+    cfg = eb_mod._config()
+    assert cfg.get('engine_install') is None and cfg.get('engine_removed') is False
+
+
+def test_install_engine_job_failure_is_reported(app, monkeypatch, docker_host):
+    _mk_plugin_row()
+    _mk_admin()
+    from app.models.api_key import ApiKey
+    monkeypatch.setattr(TramoHostService, 'install', classmethod(
+        lambda cls, **kw: {'success': False, 'error': 'pull access denied'}))
+    res = jobs_mod.install_engine(SimpleNamespace(id=1))
+    assert res['installed'] is False
+    st = TramoHostService.get_status()
+    assert st['state'] == 'install_failed'
+    assert st['install_error'] == 'pull access denied'
+    assert 'pull access denied' in TramoHostService.not_installed_message()
+    # The call-back key issued for the failed container is revoked again.
+    assert not ApiKey.query.filter_by(name=eb_mod.CALLBACK_KEY_NAME, is_active=True).count()
+
+
+def test_install_engine_job_skips_when_engine_removed(app, monkeypatch, docker_host):
+    _mk_plugin_row({'engine_removed': True})
+    monkeypatch.setattr(TramoHostService, 'install', classmethod(
+        lambda cls, **kw: pytest.fail('must not install a removed engine')))
+    res = jobs_mod.install_engine(SimpleNamespace(id=1))
+    assert res['skipped'] is True
+
+
+def test_stale_installing_marker_is_ignored(app, monkeypatch, docker_host):
+    import time
+    _mk_plugin_row({'engine_install': {
+        'state': 'installing', 'at': time.time() - host_mod.INSTALL_STALE_SECONDS - 5}})
+    monkeypatch.setattr(TramoHostService, '_docker',
+                        classmethod(lambda cls, args, **kw: {'success': False}))
+    assert TramoHostService.get_status()['state'] == 'not_installed'
+
+
+def test_not_installed_message_while_installing(app, docker_host):
+    import time
+    _mk_plugin_row({'engine_install': {'state': 'installing', 'at': time.time()}})
+    assert 'still being set up' in TramoHostService.not_installed_message()
+    res = WorkflowStore.deploy()
+    assert res['success'] is False and 'still being set up' in res['error']
+
+
+def test_removing_engine_records_operator_choice(tramo_client, auth_headers, app, monkeypatch):
+    _mk_plugin_row()
+    monkeypatch.setattr(TramoHostService, 'uninstall', classmethod(
+        lambda cls, keep_data=True: {'success': True}))
+    r = tramo_client.delete('/api/v1/tramo/host/install', headers=auth_headers)
+    assert r.status_code == 200
+    assert eb_mod._config().get('engine_removed') is True
+
+
+# --------------------------------------------------------------------------- #
 # blueprint: auth, run proxy, runs filter, settings mask, hooks passthrough
 # --------------------------------------------------------------------------- #
 def test_routes_require_auth(tramo_client):

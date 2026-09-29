@@ -29,6 +29,7 @@ import logging
 import os
 import secrets
 import subprocess
+import time
 
 import requests
 
@@ -68,6 +69,13 @@ RUN_TIMEOUT = 120
 DOCKER_TIMEOUT = 180
 
 DOCS_URL = 'https://github.com/jhd3197/tramo'
+
+# Installing the extension installs the engine in the background (see
+# lifecycle.on_install / jobs.install_engine). Its progress lives in plugin
+# config as ``engine_install`` = {'state': 'installing'|'failed', 'error', 'at'}
+# so the UI can show it; an 'installing' marker older than this is treated as
+# lost (worker restarted mid-pull) rather than shown forever.
+INSTALL_STALE_SECONDS = 15 * 60
 
 
 class TramoHostService:
@@ -281,6 +289,11 @@ class TramoHostService:
         res = cls._docker(['inspect', '--format', '{{.State.Running}}',
                            CONTAINER_NAME], timeout=20)
         if not res.get('success'):
+            progress = cls.install_progress()
+            if progress:
+                status['state'] = progress['state']
+                if progress.get('error'):
+                    status['install_error'] = progress['error']
             return status
         status['installed'] = True
         running = res.get('stdout', '').strip() == 'true'
@@ -355,6 +368,71 @@ class TramoHostService:
             result['warning'] = ('Container started but the API key could not be '
                                  'persisted to the plugin config store.')
         return result
+
+    @classmethod
+    def install_engine(cls, host_port=None):
+        """Install the engine with its scoped panel call-back key.
+
+        The one install path shared by the Settings button and the automatic
+        install that follows installing the extension. The key is revoked again
+        if the container does not start.
+        """
+        from . import events_bridge
+        callback_key = events_bridge.issue_callback_key()
+        result = cls.install(host_port=host_port, callback_api_key=callback_key)
+        if result.get('success'):
+            cls._save_config({'engine_install': None, 'engine_removed': False})
+        else:
+            events_bridge.revoke_callback_key()
+        return result
+
+    @classmethod
+    def auto_install_skip_reason(cls):
+        """Why the engine should NOT be installed automatically, or None."""
+        if cls._is_windows():
+            return 'not supported on Windows'
+        if not is_command_available('docker'):
+            return 'Docker is not installed on this host'
+        if cls._config().get('engine_removed'):
+            return 'the engine was removed by an operator'
+        if cls.is_installed():
+            return 'the engine is already installed'
+        return None
+
+    @classmethod
+    def set_install_progress(cls, state, error=None):
+        """Record auto-install progress ('installing' / 'failed'); None clears."""
+        value = None if state is None else {'state': state, 'error': error,
+                                            'at': time.time()}
+        cls._save_config({'engine_install': value})
+
+    @classmethod
+    def install_progress(cls):
+        """The live auto-install marker as {'state': 'installing'|'install_failed', 'error'}."""
+        marker = cls._config().get('engine_install')
+        if not isinstance(marker, dict):
+            return None
+        if marker.get('state') == 'installing':
+            if time.time() - float(marker.get('at') or 0) > INSTALL_STALE_SECONDS:
+                return None
+            return {'state': 'installing'}
+        if marker.get('state') == 'failed':
+            return {'state': 'install_failed', 'error': marker.get('error')}
+        return None
+
+    @classmethod
+    def not_installed_message(cls):
+        """Why deploy/run can't proceed yet, worded for the engine's actual state."""
+        progress = cls.install_progress() or {}
+        if progress.get('state') == 'installing':
+            return ('The Automations engine is still being set up. '
+                    'Try again in a minute.')
+        if progress.get('state') == 'install_failed':
+            return ('The Automations engine could not be installed: '
+                    f"{progress.get('error') or 'unknown error'}. "
+                    'Retry from the Automations page.')
+        return ('The Automations engine is not installed. Install it from the '
+                'Automations page (admin only).')
 
     @classmethod
     def _build_run_args(cls, port, api_key, callback_url=None, callback_api_key=None):

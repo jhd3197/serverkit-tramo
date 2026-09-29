@@ -85,7 +85,7 @@ const runPill = (status) => {
 // Host lifecycle state → Pill colour.
 const hostPill = (state) => {
     const kind = state === 'ready' ? 'green'
-        : state === 'unhealthy' ? 'amber'
+        : state === 'unhealthy' || state === 'installing' ? 'amber'
             : state === 'stopped' ? 'gray' : 'red';
     return <Pill kind={kind}>{state || 'not_installed'}</Pill>;
 };
@@ -166,6 +166,17 @@ const AutomationsPage = () => {
         }
     }, [toast]);
 
+    // Engine status. The workflows tab needs it too: the engine installs itself
+    // in the background after the extension is installed, and deploy/run only
+    // work once it is ready.
+    const loadHost = useCallback(async () => {
+        try {
+            setHost(await api.request('/tramo/host/status'));
+        } catch {
+            // The settings tab reports load errors; the notice just stays hidden.
+        }
+    }, []);
+
     const loadSettings = useCallback(async () => {
         setSettingsLoading(true);
         try {
@@ -196,11 +207,19 @@ const AutomationsPage = () => {
     }, [toast]);
 
     useEffect(() => {
-        if (activeTab === 'workflows') loadWorkflows();
+        if (activeTab === 'workflows') { loadWorkflows(); loadHost(); }
         else if (activeTab === 'templates') loadTemplates();
         else if (activeTab === 'runs') loadRuns();
         else if (activeTab === 'settings') loadSettings();
-    }, [activeTab, loadWorkflows, loadTemplates, loadRuns, loadSettings]);
+    }, [activeTab, loadWorkflows, loadTemplates, loadRuns, loadSettings, loadHost]);
+
+    // Poll while the background install pulls the image and starts the container.
+    const hostState = host?.state;
+    useEffect(() => {
+        if (hostState !== 'installing') return undefined;
+        const timer = setInterval(loadHost, 5000);
+        return () => clearInterval(timer);
+    }, [hostState, loadHost]);
 
     const toggleFavorite = (id) => {
         setFavorites((prev) => {
@@ -387,7 +406,8 @@ const AutomationsPage = () => {
             await api.request('/tramo/host/install', { method: 'POST', body });
             toast.success(t('tramo.automationsPage.tramoEngineInstalled', 'tramo engine installed'));
             setInstallPort('');
-            await loadSettings();
+            if (activeTab === 'settings') await loadSettings();
+            else await loadHost();
         } catch (error) {
             toast.error(t('tramo.automationsPage.installFailed', 'Install failed: {{message}}', { message: error.message }));
         } finally {
@@ -481,9 +501,9 @@ const AutomationsPage = () => {
     // ── Renderers ──
     const renderTemplates = () => {
         const q = templateSearch.trim().toLowerCase();
-        const filtered = templates.filter((t) => !q
-            || t.name.toLowerCase().includes(q)
-            || (t.description || '').toLowerCase().includes(q));
+        const filtered = templates.filter((tpl) => !q
+            || tpl.name.toLowerCase().includes(q)
+            || (tpl.description || '').toLowerCase().includes(q));
         // Favorites float to the top; otherwise preserve the incoming order.
         const sorted = [...filtered].sort(
             (a, b) => (favorites.has(a.id) ? 0 : 1) - (favorites.has(b.id) ? 0 : 1));
@@ -513,12 +533,12 @@ const AutomationsPage = () => {
                     />
                 ) : (
                     <div className="tramo-tpl-grid">
-                        {sorted.map((t) => {
-                            const meta = TEMPLATE_META[t.id] || DEFAULT_TEMPLATE_META;
+                        {sorted.map((tpl) => {
+                            const meta = TEMPLATE_META[tpl.id] || DEFAULT_TEMPLATE_META;
                             const { Icon } = meta;
-                            const fav = favorites.has(t.id);
+                            const fav = favorites.has(tpl.id);
                             return (
-                                <div className="tramo-card" key={t.id}>
+                                <div className="tramo-card" key={tpl.id}>
                                     <div className="tramo-card__top">
                                         <span className={`tramo-card__icon tramo-card__icon--${meta.brand}`}>
                                             <Icon size={20} />
@@ -526,15 +546,15 @@ const AutomationsPage = () => {
                                         <button
                                             type="button"
                                             className={`tramo-card__fav${fav ? ' is-fav' : ''}`}
-                                            onClick={() => toggleFavorite(t.id)}
+                                            onClick={() => toggleFavorite(tpl.id)}
                                             title={fav ? t('tramo.automationsPage.removeFromFavorites', 'Remove from favorites') : t('tramo.automationsPage.addToFavorites', 'Add to favorites')}
                                             aria-pressed={fav}
                                         >
                                             <Star size={16} />
                                         </button>
                                     </div>
-                                    <h4 className="tramo-card__name">{t.name}</h4>
-                                    {t.description && <p className="tramo-card__desc">{t.description}</p>}
+                                    <h4 className="tramo-card__name">{tpl.name}</h4>
+                                    {tpl.description && <p className="tramo-card__desc">{tpl.description}</p>}
                                     {meta.tags.length > 0 && (
                                         <div className="tramo-card__tags">
                                             {meta.tags.map((tag) => (
@@ -543,7 +563,7 @@ const AutomationsPage = () => {
                                         </div>
                                     )}
                                     <div className="tramo-card__foot">
-                                        <Button variant="default" size="sm" disabled={busy} onClick={() => handleFromTemplate(t)}>
+                                        <Button variant="default" size="sm" disabled={busy} onClick={() => handleFromTemplate(tpl)}>
                                             <Plus size={14} /> {t('tramo.automationsPage.useTemplate', 'Use template')}
                                         </Button>
                                     </div>
@@ -552,6 +572,47 @@ const AutomationsPage = () => {
                         })}
                     </div>
                 )}
+            </div>
+        );
+    };
+
+    const renderEngineNotice = () => {
+        if (!host || host.state === 'ready' || host.error) return null;
+        const state = host.state;
+        let message;
+        let action = null;
+        if (state === 'installing') {
+            message = t('tramo.automationsPage.engineInstalling', 'Setting up the automation engine. The first install downloads it, which can take a minute. You can build workflows in the meantime.');
+        } else if (state === 'install_failed') {
+            message = t('tramo.automationsPage.engineInstallFailed', 'The automation engine could not be installed.');
+            action = (
+                <Button variant="default" size="sm" onClick={handleInstall} disabled={busy}>
+                    <RefreshCw size={14} /> {t('tramo.automationsPage.retryInstall', 'Retry install')}
+                </Button>
+            );
+        } else if (state === 'not_installed') {
+            message = t('tramo.automationsPage.engineNotInstalled', 'The automation engine is not installed. Workflows need it to deploy and run.');
+            action = (
+                <Button variant="default" size="sm" onClick={handleInstall} disabled={busy}>
+                    <Power size={14} /> {t('tramo.automationsPage.installEngine', 'Install engine')}
+                </Button>
+            );
+        } else {
+            message = t('tramo.automationsPage.engineNotReady', 'The automation engine is {{state}}. Deploying and running workflows needs it running.', { state });
+            action = (
+                <Button variant="outline" size="sm" onClick={() => navigate('/automations/settings')}>
+                    <Server size={14} /> {t('tramo.automationsPage.engineSettings', 'Engine settings')}
+                </Button>
+            );
+        }
+        return (
+            <div className={`tramo-engine-notice tramo-engine-notice--${state}`}>
+                <div className="tramo-engine-notice__text">
+                    {state === 'installing' && <RefreshCw size={14} className="tramo-engine-notice__spin" />}
+                    <span>{message}</span>
+                    {host.install_error && <div className="tramo-note__detail">{host.install_error}</div>}
+                </div>
+                {action}
             </div>
         );
     };
@@ -722,8 +783,19 @@ const AutomationsPage = () => {
                                     </div>
                                 )}
 
+                                {host?.install_error && (
+                                    <div className="tramo-note">
+                                        {t('tramo.automationsPage.engineInstallFailed', 'The automation engine could not be installed.')}
+                                        <div className="tramo-note__detail">{host.install_error}</div>
+                                    </div>
+                                )}
+
                                 <div className="tramo-host-actions">
-                                    {!installed ? (
+                                    {state === 'installing' ? (
+                                        <span className="tramo-install__pending">
+                                            <RefreshCw size={14} className="tramo-engine-notice__spin" /> {t('tramo.automationsPage.engineInstallingShort', 'Installing the engine...')}
+                                        </span>
+                                    ) : !installed ? (
                                         <div className="tramo-install">
                                             <div className="form-group">
                                                 <Label>{t('tramo.automationsPage.hostPortOptional', 'Host port (optional)')}</Label>
@@ -878,7 +950,7 @@ const AutomationsPage = () => {
     if (activeTab === 'workflows') {
         topbarActions = (
             <>
-                <Button variant="outline" size="sm" onClick={handleDeploy} disabled={busy}>
+                <Button variant="outline" size="sm" onClick={handleDeploy} disabled={busy || (!!host && host.state !== 'ready')}>
                     <Rocket size={14} /> {t('tramo.automationsPage.deploy', 'Deploy')}
                 </Button>
                 <Button variant="default" size="sm" onClick={openNewModal}>
@@ -917,6 +989,7 @@ const AutomationsPage = () => {
 
             <div className="sk-tabgroup__content">
                 <div className="sk-tabgroup__inner">
+                    {activeTab === 'workflows' && renderEngineNotice()}
                     {activeTab === 'workflows' && renderWorkflows()}
                     {activeTab === 'templates' && renderTemplates()}
                     {activeTab === 'runs' && renderRuns()}

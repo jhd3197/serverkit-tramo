@@ -9,6 +9,9 @@ best-effort maintenance tasks).
   in-memory ring evicts them; notify admins once per newly-seen failed run.
 * ``tramo.health_check`` (:func:`health_check`) -- probe ``GET /api/health`` and
   notify ``tramo.host_unreachable`` after repeated failures.
+* ``tramo.install_engine`` (:func:`install_engine`) -- one-shot, enqueued by
+  ``lifecycle.on_install`` so installing the extension brings the engine up
+  without holding the Marketplace request open for the image pull.
 """
 import logging
 
@@ -18,6 +21,32 @@ SLUG = 'serverkit-tramo'
 
 # Consecutive health failures before we notify (avoids flapping on a restart).
 _HEALTH_FAIL_THRESHOLD = 2
+
+
+def install_engine(job):
+    """Install the engine after the extension is installed. Never raises."""
+    try:
+        from .host_service import TramoHostService
+
+        reason = TramoHostService.auto_install_skip_reason()
+        if reason:
+            TramoHostService.set_install_progress(None)
+            return {'skipped': True, 'reason': reason}
+
+        TramoHostService.set_install_progress('installing')
+        result = TramoHostService.install_engine()
+        if result.get('success'):
+            return {'installed': True, 'host_port': result.get('host_port')}
+        TramoHostService.set_install_progress('failed', result.get('error'))
+        return {'installed': False, 'error': result.get('error')}
+    except Exception as e:  # noqa: BLE001 -- surface via status, not a crash
+        logger.warning('tramo install_engine job failed: %s', e)
+        try:
+            from .host_service import TramoHostService
+            TramoHostService.set_install_progress('failed', str(e))
+        except Exception:  # noqa: BLE001
+            pass
+        return {'error': str(e)}
 
 
 def harvest_runs(job):

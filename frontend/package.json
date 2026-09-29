@@ -2,7 +2,7 @@
   "name": "serverkit-tramo-frontend",
   "private": true,
   "type": "module",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "scripts": {
     "build": "vite build && node ../scripts/check-bundle.mjs"
   },

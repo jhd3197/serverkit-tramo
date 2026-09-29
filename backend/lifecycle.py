@@ -4,10 +4,12 @@ Contract (per the plugin SDK): a single positional arg -- the InstalledPlugin
 row. ``on_uninstall`` also accepts a ``purge`` flag. Everything here is wrapped
 so a hook failure never blocks install/uninstall.
 
-``on_install`` registers the extension's notification events and retires any
+``on_install`` registers the extension's notification events, retires any
 ghost ``serverkit-workflows`` row left over from the builder this extension
-replaces (plan 45 Phase 4). It does NOT start the container -- the operator does
-that from the Automations Settings tab (mail pattern).
+replaces (plan 45 Phase 4), and queues the engine install: the extension is
+useless without its container, so installing one installs the other. The panel
+also runs this hook on updates, which brings up the engine on installs that
+predate this -- unless an operator removed it (``engine_removed``).
 
 ``on_uninstall`` tears down everything provisioned by the engine: the container,
 the scoped call-back ApiKey, and the managed events-bridge subscription. Data
@@ -35,6 +37,23 @@ def on_install(plugin):
         logger.warning('serverkit-tramo on_install notify hook error: %s', e)
 
     _retire_workflow_builder_row()
+    _queue_engine_install()
+
+
+def _queue_engine_install():
+    """Queue ``tramo.install_engine`` unless it cannot or should not run."""
+    try:
+        from app.plugins_sdk import jobs
+        from .host_service import TramoHostService
+        reason = TramoHostService.auto_install_skip_reason()
+        if reason:
+            logger.info('serverkit-tramo: not auto-installing the engine: %s', reason)
+            return
+        TramoHostService.set_install_progress('installing')
+        jobs.enqueue('tramo.install_engine', max_attempts=1)
+        logger.info('serverkit-tramo: engine install queued')
+    except Exception as e:  # noqa: BLE001
+        logger.warning('serverkit-tramo: could not queue the engine install: %s', e)
 
 
 def _retire_workflow_builder_row():

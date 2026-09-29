@@ -30,9 +30,6 @@ logger = logging.getLogger(__name__)
 
 tramo_bp = Blueprint('tramo', __name__)
 
-_NOT_INSTALLED = ('The Automations engine is not installed. Install it from the '
-                  'Automations Settings tab (admin only).')
-
 # Response/hop headers we must not blindly relay when proxying.
 _HOP_HEADERS = {'content-length', 'transfer-encoding', 'connection',
                 'content-encoding', 'host'}
@@ -40,7 +37,7 @@ _HOP_HEADERS = {'content-length', 'transfer-encoding', 'connection',
 
 def _installed_or_error():
     if not TramoHostService.is_installed():
-        return jsonify({'error': _NOT_INSTALLED}), 503
+        return jsonify({'error': TramoHostService.not_installed_message()}), 503
     return None
 
 
@@ -251,15 +248,8 @@ def host_status():
 @admin_required
 def host_install():
     data = request.get_json(silent=True) or {}
-    # Issue the scoped call-back key so workflows can act back on the panel.
-    callback_key = events_bridge.issue_callback_key()
-    result = TramoHostService.install(
-        host_port=data.get('host_port'),
-        callback_api_key=callback_key,
-    )
+    result = TramoHostService.install_engine(host_port=data.get('host_port'))
     if not result.get('success'):
-        # Roll back the key we just issued if the container didn't start.
-        events_bridge.revoke_callback_key()
         return jsonify({'error': result.get('error', 'Install failed')}), 400
     return jsonify(result), 201
 
@@ -273,6 +263,8 @@ def host_uninstall():
     events_bridge.revoke_callback_key()
     if not result.get('success'):
         return jsonify({'error': result.get('error', 'Uninstall failed')}), 400
+    # An operator took the engine out: extension updates must not put it back.
+    TramoHostService._save_config({'engine_removed': True, 'engine_install': None})
     return jsonify(result), 200
 
 
@@ -366,7 +358,7 @@ def hooks_passthrough(subpath):
     the node) authenticates the payload.
     """
     if not TramoHostService.is_installed():
-        return jsonify({'error': _NOT_INSTALLED}), 503
+        return jsonify({'error': TramoHostService.not_installed_message()}), 503
 
     target = f'http://127.0.0.1:{TramoHostService.host_port()}/hooks/{subpath}'
     fwd_headers = {k: v for k, v in request.headers

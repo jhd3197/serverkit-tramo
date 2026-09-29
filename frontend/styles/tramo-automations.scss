@@ -71,6 +71,48 @@
         }
     }
 
+    /* Engine state on the Workflows tab (installing / failed / not installed) */
+    .tramo-engine-notice {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 14px;
+        padding: 12px 14px;
+        border-radius: var(--radius, 8px);
+        border: 1px solid rgba(234, 179, 8, 0.35);
+        background: rgba(234, 179, 8, 0.08);
+        font-size: 13px;
+        line-height: 1.5;
+
+        &--install_failed {
+            border-color: rgba(239, 68, 68, 0.35);
+            background: rgba(239, 68, 68, 0.08);
+        }
+
+        &__text {
+            flex: 1 1 280px;
+            min-width: 0;
+
+            > svg {
+                margin-right: 8px;
+                vertical-align: -2px;
+            }
+        }
+
+        &__spin {
+            animation: tramo-engine-spin 1s linear infinite;
+        }
+    }
+
+    .tramo-install__pending {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+    }
+
     /* Engine host actions */
     .tramo-host-actions {
         display: flex;
@@ -744,4 +786,8 @@
     @media (max-width: 768px) {
         &__rail { width: 260px; }
     }
+}
+
+@keyframes tramo-engine-spin {
+    to { transform: rotate(360deg); }
 }

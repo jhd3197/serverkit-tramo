@@ -196,8 +196,7 @@ class WorkflowStore:
 
         if not TramoHostService.is_installed():
             return {'success': False,
-                    'error': 'The Automations engine is not installed. Install it '
-                             'from the Automations Settings tab first.'}
+                    'error': TramoHostService.not_installed_message()}
         summary = cls.materialize()
         restart = TramoHostService.control('restart')
         if not restart.get('success'):
