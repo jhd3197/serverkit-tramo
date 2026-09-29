@@ -305,7 +305,7 @@ def test_build_run_args_argv(app):
     assert any(a.startswith('SERVERKIT_URL=') for a in argv)
     assert 'host.docker.internal:host-gateway' in argv
     assert argv[-1] == host_mod.IMAGE
-    assert 'ghcr.io/jhd3197/tramo-server:0.1.1' == host_mod.IMAGE
+    assert 'ghcr.io/jhd3197/tramo-server:0.2.4' == host_mod.IMAGE
 
 
 def test_build_run_args_includes_pack_secrets(app, monkeypatch):

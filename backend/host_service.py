@@ -45,9 +45,9 @@ logger = logging.getLogger(__name__)
 SLUG = 'serverkit-tramo'
 
 # Pinned tramo-server image (GHCR, full-pack entry). Bumped deliberately like the
-# Stalwart image, not floated. Published by the tramo repo's docker CI (plan 45
-# Phase 0); until that ships this tag will not pull on a real box.
-IMAGE = 'ghcr.io/jhd3197/tramo-server:0.1.1'
+# Stalwart image, not floated. Published by the tramo repo's release CI; 0.2.4
+# is the first tag that boots with an empty workflows dir (a fresh install).
+IMAGE = 'ghcr.io/jhd3197/tramo-server:0.2.4'
 CONTAINER_NAME = 'serverkit-tramo'
 
 # Host data dirs (bind-mounted). workflows/ holds the materialized <slug>.json

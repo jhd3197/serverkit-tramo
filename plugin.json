@@ -1,7 +1,7 @@
 {
   "name": "serverkit-tramo",
   "display_name": "Automations",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Node-based automation builder powered by tramo. Design workflows on a visual canvas (triggers, actions, branches, loops, approval gates) that react to panel events or run on a schedule, with 21 brand integration packs (Telegram, GitHub, Gmail, Discord, Notion, Stripe, Cloudflare, Postgres, Twilio and more). Enabled workflows deploy to a managed tramo container on the panel host that runs them headless, with run history, approvals, and inbound webhooks proxied through the panel. This replaces the older drag-and-drop Workflow Builder.",
   "author": "ServerKit",
   "license": "MIT",
