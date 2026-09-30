@@ -274,12 +274,52 @@ def test_deploy_stamps_deployed_at(app, monkeypatch, posix):
     monkeypatch.setattr(TramoHostService, 'is_installed', classmethod(lambda cls: True))
     monkeypatch.setattr(WorkflowStore, 'materialize',
                         classmethod(lambda cls: {'written': ['dep'], 'pruned': []}))
-    monkeypatch.setattr(TramoHostService, 'control',
-                        classmethod(lambda cls, action: {'success': True}))
+    monkeypatch.setattr(TramoHostService, 'apply_workflows',
+                        classmethod(lambda cls: {'success': True, 'method': 'reload'}))
     res = WorkflowStore.deploy()
     assert res['success'] is True
     assert wf.deployed_at is not None
     assert wf.is_dirty() is False
+
+
+def _engine(monkeypatch, reload_result):
+    """Fake engine API: record calls, answer /reload with *reload_result*."""
+    calls = []
+
+    def fake_api(cls, method, path, payload=None, timeout=None):
+        calls.append((method, path))
+        if path == '/reload':
+            return reload_result
+        return {'success': True, 'data': {'ok': True}}
+    monkeypatch.setattr(TramoHostService, '_api', classmethod(fake_api))
+    restarts = []
+    monkeypatch.setattr(TramoHostService, 'control',
+                        classmethod(lambda cls, action: restarts.append(action) or {'success': True}))
+    return calls, restarts
+
+
+def test_apply_workflows_reloads_without_restart(app, monkeypatch):
+    calls, restarts = _engine(monkeypatch, {'success': True, 'status_code': 200})
+    assert TramoHostService.apply_workflows() == {'success': True, 'method': 'reload'}
+    assert ('POST', '/reload') in calls and restarts == []
+
+
+def test_apply_workflows_restarts_engines_without_reload(app, monkeypatch):
+    calls, restarts = _engine(monkeypatch, {'success': False, 'status_code': 404, 'error': 'x'})
+    res = TramoHostService.apply_workflows()
+    assert res == {'success': True, 'method': 'restart'}
+    assert restarts == ['restart']
+    assert ('GET', '/health') in calls, 'must wait for the restarted engine'
+
+
+def test_apply_workflows_surfaces_a_rejected_reload(app, monkeypatch):
+    # A bad workflow file is the engine's answer, not a missing endpoint:
+    # restarting would only crash-loop on the same file.
+    calls, restarts = _engine(monkeypatch, {'success': False, 'status_code': 400,
+                                            'error': 'tramo API error (400): bad doc'})
+    res = TramoHostService.apply_workflows()
+    assert res['success'] is False and 'bad doc' in res['error']
+    assert restarts == []
 
 
 def test_deploy_requires_installed_engine(app, monkeypatch):
@@ -631,6 +671,8 @@ def test_workflow_crud_via_routes(tramo_client, auth_headers):
 def test_run_proxy_persists_row(tramo_client, auth_headers, monkeypatch):
     WorkflowStore.create('runme')
     monkeypatch.setattr(bp_mod.TramoHostService, 'is_installed', classmethod(lambda cls: True))
+    monkeypatch.setattr(WorkflowStore, 'materialize',
+                        classmethod(lambda cls: {'written': ['runme'], 'pruned': []}))
     monkeypatch.setattr(bp_mod.TramoHostService, '_api',
                         classmethod(lambda cls, m, p, payload=None, timeout=None:
                                     {'success': True, 'data': {'id': 'run-77', 'status': 'success',
@@ -639,6 +681,70 @@ def test_run_proxy_persists_row(tramo_client, auth_headers, monkeypatch):
     assert r.status_code == 200
     assert r.get_json()['run']['run_id'] == 'run-77'
     assert TramoRun.query.filter_by(run_id='run-77').count() == 1
+
+
+def _mark_deployed(wf):
+    from datetime import datetime
+    from app import db
+    wf.deployed_at = datetime.utcnow()
+    wf.deployed_version = wf.doc_version
+    db.session.commit()
+
+
+def _run_setup(monkeypatch, run_result):
+    monkeypatch.setattr(bp_mod.TramoHostService, 'is_installed', classmethod(lambda cls: True))
+    monkeypatch.setattr(WorkflowStore, 'materialize',
+                        classmethod(lambda cls: {'written': [], 'pruned': []}))
+    order = []
+
+    def fake_api(cls, method, path, payload=None, timeout=None):
+        order.append(path)
+        if path == '/reload':
+            return {'success': True, 'status_code': 200}
+        return run_result
+    monkeypatch.setattr(bp_mod.TramoHostService, '_api', classmethod(fake_api))
+    return order
+
+
+def test_run_deploys_an_undeployed_workflow_first(tramo_client, auth_headers, monkeypatch):
+    wf = WorkflowStore.create('fresh')
+    order = _run_setup(monkeypatch, {'success': True, 'data': {'id': 'r1', 'status': 'success',
+                                                                'workflowId': 'fresh'}})
+    r = tramo_client.post('/api/v1/tramo/workflows/fresh/run', headers=auth_headers, json={})
+    assert r.status_code == 200
+    assert order == ['/reload', '/workflows/fresh/run']
+    assert wf.is_dirty() is False
+
+
+def test_run_skips_deploy_when_already_deployed(tramo_client, auth_headers, monkeypatch):
+    wf = WorkflowStore.create('clean')
+    _mark_deployed(wf)
+    order = _run_setup(monkeypatch, {'success': True, 'data': {'id': 'r2', 'status': 'success'}})
+    r = tramo_client.post('/api/v1/tramo/workflows/clean/run', headers=auth_headers, json={})
+    assert r.status_code == 200
+    assert order == ['/workflows/clean/run']
+
+
+def test_run_disabled_workflow_is_a_clear_409(tramo_client, auth_headers, monkeypatch):
+    WorkflowStore.create('off', enabled=False)
+    _run_setup(monkeypatch, {'success': True})
+    r = tramo_client.post('/api/v1/tramo/workflows/off/run', headers=auth_headers, json={})
+    assert r.status_code == 409
+    assert 'disabled' in r.get_json()['error']
+
+
+def test_engine_errors_never_use_gateway_codes(tramo_client, auth_headers, monkeypatch):
+    # A CDN swaps 502/503/504 for its own page and the message is lost.
+    wf = WorkflowStore.create('boom')
+    _mark_deployed(wf)
+    _run_setup(monkeypatch, {'success': False, 'error': 'tramo API error (500): kaboom'})
+    r = tramo_client.post('/api/v1/tramo/workflows/boom/run', headers=auth_headers, json={})
+    assert r.status_code == 424
+    assert 'kaboom' in r.get_json()['error']
+
+    monkeypatch.setattr(bp_mod.TramoHostService, 'is_installed', classmethod(lambda cls: False))
+    r = tramo_client.post('/api/v1/tramo/workflows/boom/run', headers=auth_headers, json={})
+    assert r.status_code == 409
 
 
 def test_runs_list_filters_by_workflow(tramo_client, auth_headers, app):

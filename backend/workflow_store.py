@@ -186,11 +186,10 @@ class WorkflowStore:
 
     @classmethod
     def deploy(cls):
-        """Materialize + restart the engine + stamp ``deployed_at``.
+        """Materialize, have the engine pick the files up, stamp ``deployed_at``.
 
-        Restart is required because ``@tramo/server`` reads the workflows dir
-        only at boot (no reload endpoint yet). The checkpoint store preserves any
-        suspended runs across the restart.
+        See :meth:`TramoHostService.apply_workflows` -- a live reload on current
+        engines, a restart on older ones.
         """
         from datetime import datetime
 
@@ -198,10 +197,10 @@ class WorkflowStore:
             return {'success': False,
                     'error': TramoHostService.not_installed_message()}
         summary = cls.materialize()
-        restart = TramoHostService.control('restart')
-        if not restart.get('success'):
+        applied = TramoHostService.apply_workflows()
+        if not applied.get('success'):
             return {'success': False,
-                    'error': restart.get('error', 'Failed to restart the engine'),
+                    'error': applied.get('error', 'The engine did not load the workflows'),
                     'materialized': summary}
         now = datetime.utcnow()
         for wf in TramoWorkflow.query.filter_by(enabled=True).all():

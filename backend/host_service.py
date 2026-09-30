@@ -76,6 +76,7 @@ DOCS_URL = 'https://github.com/jhd3197/tramo'
 # so the UI can show it; an 'installing' marker older than this is treated as
 # lost (worker restarted mid-pull) rather than shown forever.
 INSTALL_STALE_SECONDS = 15 * 60
+RESTART_HEALTH_TIMEOUT = 30
 
 
 class TramoHostService:
@@ -419,6 +420,38 @@ class TramoHostService:
         if marker.get('state') == 'failed':
             return {'state': 'install_failed', 'error': marker.get('error')}
         return None
+
+    @classmethod
+    def apply_workflows(cls):
+        """Make the running engine load the materialized workflow files.
+
+        tramo-server 0.2.4+ re-reads the directory on ``POST /api/reload``,
+        keeping in-memory run history and live cron. Older engines answer
+        404/501 there and read the directory only at boot, so they get a
+        restart -- and we wait for health, because a run fired straight after
+        would hit a container that is not listening yet.
+        """
+        res = cls._api('POST', '/reload')
+        if res.get('success'):
+            return {'success': True, 'method': 'reload'}
+        if res.get('status_code') not in (404, 501):
+            return {'success': False, 'error': res.get('error', 'Engine reload failed')}
+        restart = cls.control('restart')
+        if not restart.get('success'):
+            return restart
+        if not cls._wait_healthy():
+            return {'success': False,
+                    'error': 'The engine restarted but did not become healthy in time.'}
+        return {'success': True, 'method': 'restart'}
+
+    @classmethod
+    def _wait_healthy(cls, timeout=RESTART_HEALTH_TIMEOUT):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if cls._api('GET', '/health', timeout=3).get('success'):
+                return True
+            time.sleep(1)
+        return False
 
     @classmethod
     def not_installed_message(cls):

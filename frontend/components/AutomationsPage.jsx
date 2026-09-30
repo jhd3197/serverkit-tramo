@@ -364,6 +364,7 @@ const AutomationsPage = () => {
             const res = await api.request(`/tramo/workflows/${wf.slug}/run`, { method: 'POST', body: {} });
             const status = res?.run?.status || res?.result?.status || 'started';
             toast.success(t('tramo.automationsPage.runSeeTheRunsTab', 'Run {{status}} — see the Runs tab', { status: status }));
+            await loadWorkflows(); // a run deploys new/edited workflows first
         } catch (error) {
             toast.error(t('tramo.automationsPage.runFailed', 'Run failed: {{message}}', { message: error.message }));
         } finally {

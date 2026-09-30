@@ -34,10 +34,17 @@ tramo_bp = Blueprint('tramo', __name__)
 _HOP_HEADERS = {'content-length', 'transfer-encoding', 'connection',
                 'content-encoding', 'host'}
 
+# Panel-facing engine failures use 409/424, never 502/503/504: a CDN in front
+# of the panel (Cloudflare) swaps those gateway codes for its own error page,
+# so the browser never sees our JSON message. The inbound-webhook passthrough
+# keeps gateway codes -- its callers are external services that retry on them.
+_ENGINE_NOT_READY = 409
+_ENGINE_FAILED = 424
+
 
 def _installed_or_error():
     if not TramoHostService.is_installed():
-        return jsonify({'error': TramoHostService.not_installed_message()}), 503
+        return jsonify({'error': TramoHostService.not_installed_message()}), _ENGINE_NOT_READY
     return None
 
 
@@ -105,7 +112,7 @@ def delete_workflow(slug):
 def deploy():
     result = WorkflowStore.deploy()
     if not result.get('success'):
-        code = 503 if 'not installed' in (result.get('error') or '') else 400
+        code = _ENGINE_NOT_READY if not TramoHostService.is_installed() else 400
         return jsonify({'error': result.get('error', 'Deploy failed'),
                         'materialized': result.get('materialized')}), code
     return jsonify(result), 200
@@ -150,11 +157,20 @@ def run_workflow(slug):
     wf = WorkflowStore.get(slug)
     if not wf:
         return jsonify({'error': 'Workflow not found'}), 404
+    if not wf.enabled:
+        return jsonify({'error': 'This workflow is disabled. Enable it to run it.'}), _ENGINE_NOT_READY
+    # The engine only knows deployed docs, so running a new or edited workflow
+    # deploys it first -- Run should run what the editor shows.
+    if wf.is_dirty():
+        deployed = WorkflowStore.deploy()
+        if not deployed.get('success'):
+            return jsonify({'error': 'Could not deploy the workflow before running it: '
+                                     f"{deployed.get('error', 'deploy failed')}"}), _ENGINE_FAILED
     payload = request.get_json(silent=True) or {}
     res = TramoHostService._api('POST', f'/workflows/{slug}/run', payload,
                                 timeout=RUN_TIMEOUT)
     if not res.get('success'):
-        return jsonify({'error': res.get('error', 'Run failed')}), 502
+        return jsonify({'error': res.get('error', 'Run failed')}), _ENGINE_FAILED
     summary = res.get('data') or {}
     try:
         row, _ = upsert_run(summary if isinstance(summary, dict) else {})
@@ -200,7 +216,7 @@ def replay_run(run_id):
         return guard
     res = TramoHostService._api('POST', f'/runs/{run_id}/replay')
     if not res.get('success'):
-        return jsonify({'error': res.get('error', 'Replay failed')}), 502
+        return jsonify({'error': res.get('error', 'Replay failed')}), _ENGINE_FAILED
     try:
         if isinstance(res.get('data'), dict):
             upsert_run(res['data'])
@@ -232,7 +248,7 @@ def approve_run(run_id):
     payload = request.get_json(silent=True) or {}
     res = TramoHostService._api('POST', f'/runs/{run_id}/approve', payload)
     if not res.get('success'):
-        return jsonify({'error': res.get('error', 'Approve failed')}), 502
+        return jsonify({'error': res.get('error', 'Approve failed')}), _ENGINE_FAILED
     return jsonify(res.get('data') or {'approved': True}), 200
 
 
