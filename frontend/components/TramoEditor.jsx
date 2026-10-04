@@ -47,7 +47,7 @@ const TramoEditor = ({ slug, onSaveStateChange }) => {
     if (!handle.ready) {
         return (
             <div className="tramo-editor__loading">
-                <EmptyState loading title={t('tramo.tramoEditor.loadingWorkflow', 'Loading workflow...')} />
+                <EmptyState loading title={t('tramo.tramoEditor.loadingWorkflow', 'Loading workflow…')} />
             </div>
         );
     }

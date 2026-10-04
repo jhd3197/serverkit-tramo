@@ -53,7 +53,7 @@ const DEFAULT_TEMPLATE_META = { Icon: Zap, brand: 'default', tags: [] };
 const TRIGGERS = [
     {
         id: 'manual', Icon: MousePointerClick, titleKey: 'tramo.automationsPage.manuallyTrigger', title: 'Manually trigger',
-        subtitleKey: 'tramo.automationsPage.runItOnDemandFromThe', subtitle: 'Run it on demand from the Automations page',
+        subtitleKey: 'tramo.automationsPage.runItOnDemandFromThe', subtitle: 'Run it on demand from the automations page',
         node: () => ({ id: 'trigger', type: 'manual-trigger', position: { x: 80, y: 120 }, config: {} }),
     },
     {
@@ -63,7 +63,7 @@ const TRIGGERS = [
     },
     {
         id: 'event', Icon: Zap, titleKey: 'tramo.automationsPage.onAPanelEvent', title: 'On a panel event',
-        subtitleKey: 'tramo.automationsPage.reactToAppBackupHealthOr', subtitle: 'React to app, backup, health, or security events',
+        subtitleKey: 'tramo.automationsPage.reactToAppBackupHealthOr', subtitle: 'React to service, backup, health, or security events',
         node: () => ({ id: 'trigger', type: 'webhook-trigger', position: { x: 80, y: 120 }, config: { path: '/sk/events', method: 'POST' } }),
     },
     {
@@ -238,7 +238,7 @@ const AutomationsPage = () => {
     };
 
     const handleCreate = async () => {
-        if (!newName.trim()) { toast.error(t('tramo.automationsPage.nameIsRequired', 'Name is required.')); return; }
+        if (!newName.trim()) { toast.error(t('tramo.automationsPage.nameIsRequired', 'Name is required')); return; }
         const trigger = TRIGGERS.find((t) => t.id === newTrigger) || TRIGGERS[0];
         const doc = { name: newName.trim(), nodes: [trigger.node()], edges: [] };
         setBusy(true);
@@ -283,7 +283,7 @@ const AutomationsPage = () => {
             setImportText(await file.text());
             if (!importName.trim()) setImportName(file.name.replace(/\.json$/i, ''));
         } catch {
-            toast.error(t('tramo.automationsPage.couldNotReadThatFile', 'Could not read that file.'));
+            toast.error(t('tramo.automationsPage.couldNotReadThatFile', 'Could not read that file'));
         }
         e.target.value = '';
     };
@@ -327,7 +327,8 @@ const AutomationsPage = () => {
 
     const handleDeleteWorkflow = (wf) => {
         setConfirmDialog({
-            title: `Delete ${wf.name}?`,
+            titleKey: 'tramo.automationsPage.deleteWorkflowTitle', title: 'Delete {{name}}?',
+            titleValues: { name: wf.name },
             messageKey: 'tramo.automationsPage.thisRemovesTheWorkflowAndIts', message: 'This removes the workflow and its stored document. Deployed runs already recorded are kept.',
             confirmTextKey: 'tramo.automationsPage.delete', confirmText: 'Delete',
             variant: 'danger',
@@ -363,7 +364,7 @@ const AutomationsPage = () => {
         try {
             const res = await api.request(`/tramo/workflows/${wf.slug}/run`, { method: 'POST', body: {} });
             const status = res?.run?.status || res?.result?.status || 'started';
-            toast.success(t('tramo.automationsPage.runSeeTheRunsTab', 'Run {{status}} — see the Runs tab', { status: status }));
+            toast.success(t('tramo.automationsPage.runSeeTheRunsTab', 'Run {{status}}. See the runs tab.', { status: status }));
             await loadWorkflows(); // a run deploys new/edited workflows first
         } catch (error) {
             toast.error(t('tramo.automationsPage.runFailed', 'Run failed: {{message}}', { message: error.message }));
@@ -418,17 +419,17 @@ const AutomationsPage = () => {
 
     const handleUninstall = (keepData) => {
         setConfirmDialog({
-            titleKey: 'tramo.automationsPage.removeTramoEngine', title: 'Remove tramo engine',
+            titleKey: 'tramo.automationsPage.removeTramoEngine', title: 'Uninstall tramo engine',
             message: keepData
-                ? 'Remove the tramo container? Workflow data stays on disk and a reinstall picks it back up.'
-                : 'Remove the tramo container AND delete all engine data? This cannot be undone.',
-            confirmTextKey: 'tramo.automationsPage.remove', confirmText: 'Remove',
+                ? t('tramo.automationsPage.uninstallKeepDataMessage', 'Uninstall the tramo engine? The container is removed; workflow data stays on disk and a reinstall picks it back up.')
+                : t('tramo.automationsPage.uninstallDeleteDataMessage', "Uninstall the tramo engine and delete all engine data? This can't be undone."),
+            confirmTextKey: 'tramo.automationsPage.remove', confirmText: 'Uninstall',
             variant: 'danger',
             onConfirm: async () => {
                 setConfirmDialog(null);
                 try {
                     await api.request(`/tramo/host/install?keep_data=${keepData}`, { method: 'DELETE' });
-                    toast.success(t('tramo.automationsPage.tramoEngineRemoved', 'tramo engine removed'));
+                    toast.success(t('tramo.automationsPage.tramoEngineRemoved', 'tramo engine uninstalled'));
                     await loadSettings();
                 } catch (error) {
                     toast.error(t('tramo.automationsPage.uninstallFailed', 'Uninstall failed: {{message}}', { message: error.message }));
@@ -452,7 +453,7 @@ const AutomationsPage = () => {
     };
 
     const handleAddSecret = async () => {
-        if (!newSecret.name.trim() || !newSecret.value) { toast.error(t('tramo.automationsPage.nameAndValueAreRequired', 'Name and value are required.')); return; }
+        if (!newSecret.name.trim() || !newSecret.value) { toast.error(t('tramo.automationsPage.nameAndValueAreRequired', 'Name and value are required')); return; }
         setBusy(true);
         try {
             await api.request('/tramo/settings', {
@@ -486,7 +487,7 @@ const AutomationsPage = () => {
 
     const handleSaveHostPort = async () => {
         const port = Number(hostPortDraft);
-        if (!port) { toast.error(t('tramo.automationsPage.enterAValidPort', 'Enter a valid port.')); return; }
+        if (!port) { toast.error(t('tramo.automationsPage.enterAValidPort', 'Enter a valid port')); return; }
         setBusy(true);
         try {
             await api.request('/tramo/settings', { method: 'PUT', body: { host_port: port } });
@@ -515,22 +516,24 @@ const AutomationsPage = () => {
                         <Search size={15} />
                         <input
                             type="text"
-                            placeholder={t('tramo.automationsPage.searchTemplates', 'Search templates...')}
+                            placeholder={t('tramo.automationsPage.searchTemplates', 'Search templates…')}
                             value={templateSearch}
                             onChange={(e) => setTemplateSearch(e.target.value)}
                         />
                     </div>
                     <span className="tramo-templates__count">
-                        {filtered.length} template{filtered.length === 1 ? '' : 's'}
+                        {filtered.length === 1
+                            ? t('tramo.automationsPage.templateCountOne', '{{count}} template', { count: filtered.length })
+                            : t('tramo.automationsPage.templateCount', '{{count}} templates', { count: filtered.length })}
                     </span>
                 </div>
                 {templatesLoading ? (
-                    <EmptyState loading title={t('tramo.automationsPage.loadingTemplates', 'Loading templates...')} />
+                    <EmptyState loading title={t('tramo.automationsPage.loadingTemplates', 'Loading templates…')} />
                 ) : sorted.length === 0 ? (
                     <EmptyState
                         icon={LayoutTemplate}
                         title={q ? t('tramo.automationsPage.noTemplatesMatchYourSearch', 'No templates match your search') : t('tramo.automationsPage.noTemplatesYet', 'No templates yet')}
-                        description={q ? t('tramo.automationsPage.tryADifferentSearch', 'Try a different search.') : t('tramo.automationsPage.importYourOwnToGetStarted', 'Import your own to get started.')}
+                        description={q ? t('tramo.automationsPage.tryADifferentSearch', 'Try a different search.') : t('tramo.automationsPage.importYourOwnToGetStarted', 'Import your own.')}
                     />
                 ) : (
                     <div className="tramo-tpl-grid">
@@ -621,7 +624,7 @@ const AutomationsPage = () => {
     const renderWorkflows = () => (
         <div className="card">
             <div className="card-body">
-                {wfLoading ? <EmptyState loading title={t('tramo.automationsPage.loadingWorkflows', 'Loading workflows...')} />
+                {wfLoading ? <EmptyState loading title={t('tramo.automationsPage.loadingWorkflows', 'Loading workflows…')} />
                     : workflows.length === 0 ? (
                         <EmptyState
                             icon={Workflow}
@@ -651,8 +654,8 @@ const AutomationsPage = () => {
                                         </td>
                                         <td>
                                             {wf.dirty
-                                                ? <Pill kind="amber" title={t('tramo.automationsPage.editedSinceLastDeploy', 'Edited since last deploy')}>undeployed</Pill>
-                                                : <Pill kind="green">deployed</Pill>}
+                                                ? <Pill kind="amber" title={t('tramo.automationsPage.editedSinceLastDeploy', 'Edited since last deploy')}>{t('tramo.automationsPage.undeployed', 'undeployed')}</Pill>
+                                                : <Pill kind="green">{t('tramo.automationsPage.deployed', 'deployed')}</Pill>}
                                         </td>
                                         <td className="sk-cell-mono">{wf.doc_version ?? '—'}</td>
                                         <td className="sk-cell-mono">{wf.updated_at ? formatDateTime(wf.updated_at) : '—'}</td>
@@ -688,7 +691,7 @@ const AutomationsPage = () => {
                             <div className="tramo-approval" key={a.run_id}>
                                 <div className="tramo-approval__info">
                                     <span className="sk-cell-mono">{a.workflow_slug || a.workflow || '—'}</span>
-                                    <span className="text-muted">{a.node || a.message || 'Awaiting approval'}</span>
+                                    <span className="text-muted">{a.node || a.message || t('tramo.automationsPage.awaitingApproval', 'Awaiting approval')}</span>
                                 </div>
                                 <Button variant="default" size="sm" disabled={busy} onClick={() => handleApprove(a.run_id)}>
                                     <CheckCircle2 size={14} /> {t('tramo.automationsPage.approve', 'Approve')}
@@ -700,7 +703,7 @@ const AutomationsPage = () => {
             )}
             <div className="card">
                 <div className="card-body">
-                    {runsLoading ? <EmptyState loading title={t('tramo.automationsPage.loadingRuns', 'Loading runs...')} />
+                    {runsLoading ? <EmptyState loading title={t('tramo.automationsPage.loadingRuns', 'Loading runs…')} />
                         : runs.length === 0 ? (
                             <EmptyState icon={Play} title={t('tramo.automationsPage.noRunsYet', 'No runs yet')} description={t('tramo.automationsPage.deployAnEnabledWorkflowThenTrigger', 'Deploy an enabled workflow, then trigger it or wait for a matching event.')} />
                         ) : (
@@ -735,7 +738,7 @@ const AutomationsPage = () => {
 
     const SETTINGS_SECTIONS = [
         { id: 'engine', labelKey: 'tramo.automationsPage.engine', label: 'Engine', Icon: Server },
-        { id: 'general', labelKey: 'tramo.automationsPage.eventsPort', label: 'Events & port', Icon: Zap },
+        { id: 'general', labelKey: 'tramo.automationsPage.eventsPort', label: 'Events and port', Icon: Zap },
         { id: 'secrets', labelKey: 'tramo.automationsPage.packSecrets', label: 'Pack secrets', Icon: KeyRound },
     ];
 
@@ -750,7 +753,7 @@ const AutomationsPage = () => {
                         <h3><Server size={16} /> {t('tramo.automationsPage.automationEngine', 'Automation engine')}</h3>
                     </div>
                     <div className="card-body">
-                        {settingsLoading && !host ? <EmptyState loading title={t('tramo.automationsPage.loadingEngineStatus', 'Loading engine status...')} /> : (
+                        {settingsLoading && !host ? <EmptyState loading title={t('tramo.automationsPage.loadingEngineStatus', 'Loading engine status…')} /> : (
                             <>
                                 <div className="sec-rows">
                                     <div className="sk-info-row">
@@ -794,7 +797,7 @@ const AutomationsPage = () => {
                                 <div className="tramo-host-actions">
                                     {state === 'installing' ? (
                                         <span className="tramo-install__pending">
-                                            <RefreshCw size={14} className="tramo-engine-notice__spin" /> {t('tramo.automationsPage.engineInstallingShort', 'Installing the engine...')}
+                                            <RefreshCw size={14} className="tramo-engine-notice__spin" /> {t('tramo.automationsPage.engineInstallingShort', 'Installing the engine…')}
                                         </span>
                                     ) : !installed ? (
                                         <div className="tramo-install">
@@ -826,10 +829,10 @@ const AutomationsPage = () => {
                                                 </Button>
                                             )}
                                             <Button variant="secondary" size="sm" onClick={() => handleUninstall(true)} disabled={busy}>
-                                                {t('tramo.automationsPage.removeKeepData', 'Remove (keep data)')}
+                                                {t('tramo.automationsPage.removeKeepData', 'Uninstall (keep data)')}
                                             </Button>
                                             <Button variant="destructive" size="sm" onClick={() => handleUninstall(false)} disabled={busy}>
-                                                <Trash2 size={14} /> {t('tramo.automationsPage.removeData', 'Remove + data')}
+                                                <Trash2 size={14} /> {t('tramo.automationsPage.removeData', 'Uninstall and delete data')}
                                             </Button>
                                         </>
                                     )}
@@ -842,7 +845,7 @@ const AutomationsPage = () => {
 
         const generalCard = (
             <div className="card">
-                <div className="card-header"><h3><Zap size={16} /> {t('tramo.automationsPage.eventsPort2', 'Events & port')}</h3></div>
+                <div className="card-header"><h3><Zap size={16} /> {t('tramo.automationsPage.eventsPort2', 'Events and port')}</h3></div>
                 <div className="card-body tramo-settings">
                     <div className="tramo-field">
                         <div className="tramo-field__label">
@@ -880,7 +883,7 @@ const AutomationsPage = () => {
                 </div>
                 <div className="card-body">
                     <p className="text-muted">
-                        {t('tramo.automationsPage.credentialsIntegrationPacksNeedApiKeys', 'Credentials integration packs need (API keys, tokens). Values are write-only — they are stored encrypted and never shown again after saving.')}
+                        {t('tramo.automationsPage.credentialsIntegrationPacksNeedApiKeys', "Credentials that integration packs need (API keys, tokens). Values are write-only: they're stored encrypted and never shown again after saving.")}
                     </p>
                     {(settings?.pack_secret_names?.length ?? 0) === 0 ? (
                         <p className="text-muted">{t('tramo.automationsPage.noPackSecretsSetYet', 'No pack secrets set yet.')}</p>
@@ -889,7 +892,7 @@ const AutomationsPage = () => {
                             {settings.pack_secret_names.map((name) => (
                                 <div className="tramo-secret" key={name}>
                                     <span className="sk-cell-mono">{name}</span>
-                                    <Pill kind="green">set</Pill>
+                                    <Pill kind="green">{t('tramo.automationsPage.secretSet', 'set')}</Pill>
                                 </div>
                             ))}
                         </div>
@@ -1127,9 +1130,11 @@ const AutomationsPage = () => {
 
             {confirmDialog && (
                 <ConfirmDialog
-                    title={confirmDialog.title}
-                    message={confirmDialog.message}
-                    confirmText={confirmDialog.confirmText}
+                    title={t(confirmDialog.titleKey, { defaultValue: confirmDialog.title, ...confirmDialog.titleValues })}
+                    message={confirmDialog.messageKey
+                        ? t(confirmDialog.messageKey, { defaultValue: confirmDialog.message })
+                        : confirmDialog.message}
+                    confirmText={t(confirmDialog.confirmTextKey, { defaultValue: confirmDialog.confirmText })}
                     variant={confirmDialog.variant}
                     onConfirm={confirmDialog.onConfirm}
                     onCancel={confirmDialog.onCancel}

@@ -19,7 +19,7 @@ const SaveIndicator = ({ state }) => {
         return <span className="tramo-save tramo-save--ok"><Check size={13} /> {t('tramo.automationEditorPage.saved', 'Saved')}</span>;
     }
     if (status === 'error') {
-        return <span className="tramo-save tramo-save--err"><AlertCircle size={13} /> {state?.error || 'Save failed'}</span>;
+        return <span className="tramo-save tramo-save--err"><AlertCircle size={13} /> {state?.error || t('tramo.automationEditorPage.saveFailed', 'Save failed')}</span>;
     }
     return <span className="tramo-save tramo-save--idle">{t('tramo.automationEditorPage.allChangesSaved', 'All changes saved')}</span>;
 };
@@ -55,7 +55,7 @@ const AutomationEditorPage = () => {
         try {
             const res = await api.request(`/tramo/workflows/${slug}/run`, { method: 'POST', body: {} });
             const status = res?.run?.status || res?.result?.status || 'started';
-            toast.success(t('tramo.automationEditorPage.runSeeRunsForDetails', 'Run {{status}} — see Runs for details', { status: status }), {
+            toast.success(t('tramo.automationEditorPage.runSeeRunsForDetails', 'Run {{status}}. See runs for details.', { status: status }), {
                 action: { label: t('tramo.automationEditorPage.viewRuns', 'View runs'), onClick: () => navigate('/automations/runs') },
             });
         } catch (error) {
@@ -81,7 +81,7 @@ const AutomationEditorPage = () => {
         <div className="tramo-editor-page">
             <div className="tramo-editor-page__bar">
                 <div className="tramo-editor-page__left">
-                    <Button variant="ghost" size="sm" onClick={() => navigate('/automations')} title={t('tramo.automationEditorPage.backToAutomations', 'Back to Automations')}>
+                    <Button variant="ghost" size="sm" onClick={() => navigate('/automations')} title={t('tramo.automationEditorPage.backToAutomations', 'Back to automations')}>
                         <ArrowLeft size={16} />
                     </Button>
                     <div className="tramo-editor-page__title">
@@ -105,7 +105,7 @@ const AutomationEditorPage = () => {
             </div>
 
             <div className="tramo-editor-page__body">
-                <Suspense fallback={<EmptyState loading title={t('tramo.automationEditorPage.loadingEditor', 'Loading editor...')} />}>
+                <Suspense fallback={<EmptyState loading title={t('tramo.automationEditorPage.loadingEditor', 'Loading editor…')} />}>
                     <TramoEditor slug={slug} onSaveStateChange={onSaveStateChange} />
                 </Suspense>
             </div>
