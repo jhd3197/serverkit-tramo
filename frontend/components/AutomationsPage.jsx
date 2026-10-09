@@ -11,7 +11,7 @@ import {
     Zap, MousePointerClick, Clock, Webhook, Check, Search, Star,
     Upload, FileJson,
 } from 'lucide-react';
-import { PageTopbar, Pill, api, useFormat, useNavigate, useParams, useToast } from 'serverkit-sdk';
+import { DataTable, PageTopbar, Pill, api, useFormat, useNavigate, useParams, useToast } from 'serverkit-sdk';
 import { Button, Input, Label, Modal, ConfirmDialog, EmptyState } from './primitives.jsx';
 import { useTranslation } from 'serverkit-sdk';
 
@@ -621,63 +621,147 @@ const AutomationsPage = () => {
         );
     };
 
+    // Both lists use the panel's one table (SDK DataTable): no card around it,
+    // quiet row actions, monospace only for machine values.
+    const workflowColumns = [
+        {
+            key: 'name',
+            header: t('tramo.automationsPage.name', 'Name'),
+            sortable: true,
+            hideable: false,
+            render: (wf) => <span className="sk-cell-name">{wf.name}</span>,
+        },
+        {
+            key: 'enabled',
+            header: t('tramo.automationsPage.enabled', 'Enabled'),
+            sortable: true,
+            width: '96px',
+            render: (wf) => (
+                <button
+                    type="button"
+                    className={`tramo-toggle${wf.enabled ? ' tramo-toggle--on' : ''}`}
+                    onClick={(e) => { e.stopPropagation(); handleToggleEnabled(wf); }}
+                    aria-pressed={wf.enabled}
+                    title={wf.enabled ? t('tramo.automationsPage.disable', 'Disable') : t('tramo.automationsPage.enable', 'Enable')}
+                >
+                    <span className="tramo-toggle__knob" />
+                </button>
+            ),
+        },
+        {
+            key: 'state',
+            header: t('tramo.automationsPage.state', 'State'),
+            sortable: true,
+            sortValue: (wf) => (wf.dirty ? 1 : 0),
+            render: (wf) => (wf.dirty
+                ? <Pill kind="amber" title={t('tramo.automationsPage.editedSinceLastDeploy', 'Edited since last deploy')}>{t('tramo.automationsPage.undeployed', 'undeployed')}</Pill>
+                : <Pill kind="green">{t('tramo.automationsPage.deployed', 'deployed')}</Pill>),
+        },
+        {
+            key: 'doc_version',
+            header: t('tramo.automationsPage.version', 'Version'),
+            sortable: true,
+            render: (wf) => <span className="sk-cell-mono">{wf.doc_version ?? '—'}</span>,
+        },
+        {
+            key: 'updated_at',
+            header: t('tramo.automationsPage.updated', 'Updated'),
+            sortable: true,
+            render: (wf) => <span className="sk-cell-dim">{wf.updated_at ? formatDateTime(wf.updated_at) : '—'}</span>,
+        },
+        {
+            key: 'actions',
+            header: '',
+            sortable: false,
+            hideable: false,
+            width: '1%',
+            render: (wf) => (
+                <div className="tramo-row-actions" onClick={(e) => e.stopPropagation()}>
+                    <Button variant="ghost" size="sm" disabled={busy} onClick={() => handleRunWorkflow(wf)} title={t('tramo.automationsPage.runNow', 'Run now')}>
+                        <Play size={14} />
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => navigate(`/automations/edit/${wf.slug}`)} title={t('tramo.automationsPage.edit', 'Edit')}>
+                        <Pencil size={14} />
+                    </Button>
+                    <Button variant="ghost" size="sm" className="is-danger" onClick={() => handleDeleteWorkflow(wf)} title={t('tramo.automationsPage.delete2', 'Delete')}>
+                        <Trash2 size={14} />
+                    </Button>
+                </div>
+            ),
+        },
+    ];
+
     const renderWorkflows = () => (
-        <div className="card">
-            <div className="card-body">
-                {wfLoading ? <EmptyState loading title={t('tramo.automationsPage.loadingWorkflows', 'Loading workflows…')} />
-                    : workflows.length === 0 ? (
-                        <EmptyState
-                            icon={Workflow}
-                            title={t('tramo.automationsPage.noAutomationsYet', 'No automations yet')}
-                            description={t('tramo.automationsPage.createAWorkflowOnTheVisual', 'Create a workflow on the visual canvas, or start from a template. Enable it and deploy to run it headless on the tramo engine.')}
-                        />
-                    ) : (
-                        <table className="sk-dtable">
-                            <thead>
-                                <tr>
-                                    <th>{t('tramo.automationsPage.name', 'Name')}</th><th>{t('tramo.automationsPage.enabled', 'Enabled')}</th><th>{t('tramo.automationsPage.state', 'State')}</th><th>{t('tramo.automationsPage.version', 'Version')}</th><th>{t('tramo.automationsPage.updated', 'Updated')}</th><th /></tr>
-                            </thead>
-                            <tbody>
-                                {workflows.map((wf) => (
-                                    <tr key={wf.id ?? wf.slug}>
-                                        <td className="sk-cell-mono">{wf.name}</td>
-                                        <td>
-                                            <button
-                                                type="button"
-                                                className={`tramo-toggle${wf.enabled ? ' tramo-toggle--on' : ''}`}
-                                                onClick={() => handleToggleEnabled(wf)}
-                                                aria-pressed={wf.enabled}
-                                                title={wf.enabled ? t('tramo.automationsPage.disable', 'Disable') : t('tramo.automationsPage.enable', 'Enable')}
-                                            >
-                                                <span className="tramo-toggle__knob" />
-                                            </button>
-                                        </td>
-                                        <td>
-                                            {wf.dirty
-                                                ? <Pill kind="amber" title={t('tramo.automationsPage.editedSinceLastDeploy', 'Edited since last deploy')}>{t('tramo.automationsPage.undeployed', 'undeployed')}</Pill>
-                                                : <Pill kind="green">{t('tramo.automationsPage.deployed', 'deployed')}</Pill>}
-                                        </td>
-                                        <td className="sk-cell-mono">{wf.doc_version ?? '—'}</td>
-                                        <td className="sk-cell-mono">{wf.updated_at ? formatDateTime(wf.updated_at) : '—'}</td>
-                                        <td className="tramo-row-actions">
-                                            <Button variant="secondary" size="sm" disabled={busy} onClick={() => handleRunWorkflow(wf)} title={t('tramo.automationsPage.runNow', 'Run now')}>
-                                                <Play size={14} />
-                                            </Button>
-                                            <Button variant="secondary" size="sm" onClick={() => navigate(`/automations/edit/${wf.slug}`)} title={t('tramo.automationsPage.edit', 'Edit')}>
-                                                <Pencil size={14} />
-                                            </Button>
-                                            <Button variant="destructive" size="sm" onClick={() => handleDeleteWorkflow(wf)} title={t('tramo.automationsPage.delete2', 'Delete')}>
-                                                <Trash2 size={14} />
-                                            </Button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    )}
-            </div>
-        </div>
+        <DataTable
+            columns={workflowColumns}
+            data={workflows}
+            keyField="slug"
+            storageKey="serverkit-table-tramo-workflows"
+            loading={wfLoading}
+            onRowClick={(wf) => navigate(`/automations/edit/${wf.slug}`)}
+            emptyState={(
+                <EmptyState
+                    icon={Workflow}
+                    title={t('tramo.automationsPage.noAutomationsYet', 'No automations yet')}
+                    description={t('tramo.automationsPage.createAWorkflowOnTheVisual', 'Create a workflow on the visual canvas, or start from a template. Enable it and deploy to run it headless on the tramo engine.')}
+                />
+            )}
+        />
     );
+
+    const runColumns = [
+        {
+            key: 'status',
+            header: t('tramo.automationsPage.status', 'Status'),
+            sortable: true,
+            render: (r) => runPill(r.status),
+        },
+        {
+            key: 'workflow_slug',
+            header: t('tramo.automationsPage.workflow', 'Workflow'),
+            sortable: true,
+            render: (r) => <span className="sk-cell-mono">{r.workflow_slug || '—'}</span>,
+        },
+        {
+            key: 'source',
+            header: t('tramo.automationsPage.source', 'Source'),
+            sortable: true,
+            render: (r) => <Pill kind="gray">{r.source || 'manual'}</Pill>,
+        },
+        {
+            key: 'duration',
+            header: t('tramo.automationsPage.duration', 'Duration'),
+            sortable: false,
+            render: (r) => <span className="sk-cell-dim">{formatDuration(r.started_at, r.finished_at)}</span>,
+        },
+        {
+            key: 'tokens',
+            header: t('tramo.automationsPage.tokens', 'Tokens'),
+            sortable: true,
+            sortValue: (r) => r.usage?.total_tokens ?? r.usage?.tokens ?? 0,
+            render: (r) => <span className="sk-cell-dim">{r.usage?.total_tokens ?? r.usage?.tokens ?? '—'}</span>,
+        },
+        {
+            key: 'error',
+            header: t('tramo.automationsPage.error', 'Error'),
+            sortable: false,
+            render: (r) => <span className="sk-cell-mono tramo-truncate" title={r.error || ''}>{r.error || '—'}</span>,
+        },
+        {
+            key: 'actions',
+            header: '',
+            sortable: false,
+            hideable: false,
+            width: '1%',
+            render: (r) => (
+                <div className="tramo-row-actions">
+                    <Button variant="ghost" size="sm" disabled={busy} onClick={() => handleReplay(r.run_id)} title={t('tramo.automationsPage.replay', 'Replay')}>
+                        <RefreshCw size={14} />
+                    </Button>
+                </div>
+            ),
+        },
+    ];
 
     const renderRuns = () => (
         <>
@@ -701,38 +785,16 @@ const AutomationsPage = () => {
                     </div>
                 </div>
             )}
-            <div className="card">
-                <div className="card-body">
-                    {runsLoading ? <EmptyState loading title={t('tramo.automationsPage.loadingRuns', 'Loading runs…')} />
-                        : runs.length === 0 ? (
-                            <EmptyState icon={Play} title={t('tramo.automationsPage.noRunsYet', 'No runs yet')} description={t('tramo.automationsPage.deployAnEnabledWorkflowThenTrigger', 'Deploy an enabled workflow, then trigger it or wait for a matching event.')} />
-                        ) : (
-                            <table className="sk-dtable">
-                                <thead>
-                                    <tr>
-                                        <th>{t('tramo.automationsPage.status', 'Status')}</th><th>{t('tramo.automationsPage.workflow', 'Workflow')}</th><th>{t('tramo.automationsPage.source', 'Source')}</th><th>{t('tramo.automationsPage.duration', 'Duration')}</th><th>{t('tramo.automationsPage.tokens', 'Tokens')}</th><th>{t('tramo.automationsPage.error', 'Error')}</th><th /></tr>
-                                </thead>
-                                <tbody>
-                                    {runs.map((r) => (
-                                        <tr key={r.run_id}>
-                                            <td>{runPill(r.status)}</td>
-                                            <td className="sk-cell-mono">{r.workflow_slug || '—'}</td>
-                                            <td><Pill kind="gray">{r.source || 'manual'}</Pill></td>
-                                            <td className="sk-cell-mono">{formatDuration(r.started_at, r.finished_at)}</td>
-                                            <td className="sk-cell-mono">{r.usage?.total_tokens ?? r.usage?.tokens ?? '—'}</td>
-                                            <td className="sk-cell-mono tramo-truncate" title={r.error || ''}>{r.error || '—'}</td>
-                                            <td className="tramo-row-actions">
-                                                <Button variant="secondary" size="sm" disabled={busy} onClick={() => handleReplay(r.run_id)} title={t('tramo.automationsPage.replay', 'Replay')}>
-                                                    <RefreshCw size={14} />
-                                                </Button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        )}
-                </div>
-            </div>
+            <DataTable
+                columns={runColumns}
+                data={runs}
+                keyField="run_id"
+                storageKey="serverkit-table-tramo-runs"
+                loading={runsLoading}
+                emptyState={(
+                    <EmptyState icon={Play} title={t('tramo.automationsPage.noRunsYet', 'No runs yet')} description={t('tramo.automationsPage.deployAnEnabledWorkflowThenTrigger', 'Deploy an enabled workflow, then trigger it or wait for a matching event.')} />
+                )}
+            />
         </>
     );
 

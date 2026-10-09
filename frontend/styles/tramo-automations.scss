@@ -15,8 +15,8 @@
 
     .tramo-row-actions {
         display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
+        flex-wrap: nowrap;
+        gap: 2px;
         justify-content: flex-end;
     }
 
